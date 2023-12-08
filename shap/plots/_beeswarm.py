@@ -421,11 +421,11 @@ def beeswarm(shap_values, max_display=10, order=Explanation.abs.mean(0),
     pl.gca().spines['top'].set_visible(False)
     pl.gca().spines['left'].set_visible(False)
     pl.gca().tick_params(color=axis_color, labelcolor=axis_color)
-    pl.yticks(range(len(feature_inds)), reversed(yticklabels), fontsize=13)
+    pl.gca().set_yticks(range(len(feature_inds)), reversed(yticklabels), fontsize=13)
     pl.gca().tick_params('y', length=20, width=0.5, which='major')
     pl.gca().tick_params('x', labelsize=11)
-    pl.ylim(-1, len(feature_inds))
-    pl.xlabel(labels['VALUE'], fontsize=13)
+    pl.gca().set_ylim(-1, len(feature_inds))
+    pl.gca().set_xlabel(labels['VALUE'], fontsize=13)
     if show:
         pl.show()
     else:
