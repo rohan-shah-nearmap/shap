@@ -4,6 +4,10 @@
 #include <numpy/arrayobject.h>
 #include "tree_shap.h"
 #include <iostream>
+#include "pybind11/pybind11.h"
+#include "pybind11/iostream.h"
+
+namespace py = pybind11;
 
 static PyObject *_cext_dense_tree_shap(PyObject *self, PyObject *args);
 static PyObject *_cext_dense_tree_predict(PyObject *self, PyObject *args);
@@ -50,6 +54,8 @@ PyMODINIT_FUNC init_cext(void)
 
     /* Load `numpy` functionality. */
     import_array();
+    // This leaks but who cares.
+    new py::scoped_ostream_redirect(std::cout, py::module::import("sys").attr("stdout"));
 
     #if PY_MAJOR_VERSION >= 3
         return module;

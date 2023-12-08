@@ -1,4 +1,4 @@
-/**
+ /**
  * Fast recursive computation of SHAP values in trees.
  * See https://arxiv.org/abs/1802.03888 for details.
  *
@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <cmath>
 #include <ctime>
+#include <omp.h>
 #if defined(_WIN32) || defined(WIN32)
     #include <malloc.h>
 #elif defined(__MVS__)
@@ -1091,7 +1092,32 @@ inline void tree_shap_indep(const unsigned max_depth, const unsigned num_feats,
 inline void print_progress_bar(tfloat &last_print, tfloat start_time, unsigned i, unsigned total_count) {
     const tfloat elapsed_seconds = difftime(time(NULL), start_time);
 
-    if (elapsed_seconds > 10 && elapsed_seconds - last_print > 0.5) {
+    if (elapsed_seconds - last_print > 0.5) {
+        const tfloat fraction = static_cast<tfloat>(i) / total_count;
+        const double total_seconds = elapsed_seconds / fraction;
+        last_print = elapsed_seconds;
+
+        PySys_WriteStderr(
+            "\r%3.0f%%|%.*s%.*s| %d/%d [%02d:%02d<%02d:%02d]       ",
+            fraction * 100, int(0.5 + fraction*20), "===================",
+            20-int(0.5 + fraction*20), "                   ",
+            i, total_count,
+            int(elapsed_seconds/60), int(elapsed_seconds) % 60,
+            int((total_seconds - elapsed_seconds)/60), int(total_seconds - elapsed_seconds) % 60
+        );
+
+        // Get handle to python stderr file and flush it (https://mail.python.org/pipermail/python-list/2004-November/294912.html)
+        PyObject *pyStderr = PySys_GetObject("stderr");
+        if (pyStderr) {
+            PyObject *result = PyObject_CallMethod(pyStderr, "flush", NULL);
+            Py_XDECREF(result);
+        }
+    }
+}
+inline void print_progress_bar_omp(tfloat &last_print, tfloat start_time, unsigned i, unsigned total_count) {
+    const tfloat elapsed_seconds = difftime(time(NULL), start_time);
+
+    if (omp_get_thread_num() == 0 && elapsed_seconds - last_print > 0.5) {
         const tfloat fraction = static_cast<tfloat>(i) / total_count;
         const double total_seconds = elapsed_seconds / fraction;
         last_print = elapsed_seconds;
@@ -1168,6 +1194,7 @@ inline void dense_independent(const TreeEnsemble& trees, const ExplanationDatase
     tfloat margin_r = 0;
     time_t start_time = time(NULL);
     tfloat last_print = 0;
+    #pragma omp parallel for
     for (unsigned oind = 0; oind < trees.num_outputs; ++oind) {
         // set the values in the reformatted tree to the current output index
         for (unsigned i = 0; i < trees.tree_limit; ++i) {
@@ -1185,7 +1212,7 @@ inline void dense_independent(const TreeEnsemble& trees, const ExplanationDatase
             instance_out_contribs = out_contribs + i * (data.M + 1) * trees.num_outputs;
             const tfloat y_i = data.y == NULL ? 0 : data.y[i];
 
-            print_progress_bar(last_print, start_time, oind * data.num_X + i, data.num_X * trees.num_outputs);
+            print_progress_bar_omp(last_print, start_time, oind * data.num_X + i, data.num_X * trees.num_outputs);
 
             // compute the model's margin output for x
             if (transform != NULL) {
@@ -1267,25 +1294,40 @@ inline void dense_independent(const TreeEnsemble& trees, const ExplanationDatase
  */
 inline void dense_tree_path_dependent(const TreeEnsemble& trees, const ExplanationDataset &data,
                                tfloat *out_contribs, tfloat transform(const tfloat, const tfloat)) {
-    tfloat *instance_out_contribs;
-    TreeEnsemble tree;
-    ExplanationDataset instance;
-
+    time_t start_time = time(NULL);
+    tfloat last_print = 0;
+    // This will get ugly if 200 is too small
+    const int max_threads = 200;
+    int *counters = (int*)calloc(max_threads, sizeof(int));
+    memset(counters, 0, sizeof(int)*max_threads);
     // build explanation for each sample
-    for (unsigned i = 0; i < data.num_X; ++i) {
-        instance_out_contribs = out_contribs + i * (data.M + 1) * trees.num_outputs;
-        data.get_x_instance(instance, i);
+    #pragma omp parallel
+    {
+        TreeEnsemble tree;
+        ExplanationDataset instance;
+        tfloat *instance_out_contribs;
+        #pragma omp for
+        for (unsigned i = 0; i < data.num_X; ++i) {
+	        counters[omp_get_thread_num()]++;
+            if(omp_get_thread_num() == 0) {
+                unsigned int total = 0;
+                for(unsigned int j = 0; j < max_threads; j++) total += counters[j];
+                print_progress_bar_omp(last_print, start_time, total, data.num_X);
+            }
+            instance_out_contribs = out_contribs + i * (data.M + 1) * trees.num_outputs;
+            data.get_x_instance(instance, i);
 
-        // aggregate the effect of explaining each tree
-        // (this works because of the linearity property of Shapley values)
-        for (unsigned j = 0; j < trees.tree_limit; ++j) {
-            trees.get_tree(tree, j);
-            tree_shap(tree, instance, instance_out_contribs, 0, 0);
-        }
+            // aggregate the effect of explaining each tree
+            // (this works because of the linearity property of Shapley values)
+            for (unsigned j = 0; j < trees.tree_limit; ++j) {
+                trees.get_tree(tree, j);
+                tree_shap(tree, instance, instance_out_contribs, 0, 0);
+            }
 
-        // apply the base offset to the bias term
-        for (unsigned j = 0; j < trees.num_outputs; ++j) {
-            instance_out_contribs[data.M * trees.num_outputs + j] += trees.base_offset[j];
+            // apply the base offset to the bias term
+            for (unsigned j = 0; j < trees.num_outputs; ++j) {
+                instance_out_contribs[data.M * trees.num_outputs + j] += trees.base_offset[j];
+            }
         }
     }
 }

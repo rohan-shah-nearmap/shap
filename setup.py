@@ -99,16 +99,17 @@ def compile_cuda_module(host_args):
 def run_setup(*, with_binary, with_cuda):
     ext_modules = []
     if with_binary:
-        compile_args = []
+        compile_args = ["-fopenmp"]
         if sys.platform == 'zos':
             compile_args.append('-qlonglong')
         if sys.platform == 'win32':
             compile_args.append('/MD')
 
         ext_modules.append(
-            Extension('shap._cext', sources=['shap/cext/_cext.cc'],
-                      include_dirs=[np.get_include()],
-                      extra_compile_args=compile_args))
+            Extension('shap._cext', sources=['shap/cext/_cext.cpp'],
+                      depends=["shap/cext/tree_shap.h"],
+                      include_dirs=[np.get_include(), 'shap/pybind11'],
+                      extra_compile_args=compile_args, extra_link_args=["-lgomp"]))
     if with_cuda:
         try:
             cuda_home, _ = get_cuda_path()
