@@ -428,8 +428,7 @@ def beeswarm(shap_values, max_display=10, order=Explanation.abs.mean(0),
     pl.gca().set_xlabel(labels['VALUE'], fontsize=13)
     if show:
         pl.show()
-    else:
-        return pl.gca()
+    return pl.gcf(), feature_names
 
 def shorten_text(text, length_limit):
     if len(text) > length_limit:
